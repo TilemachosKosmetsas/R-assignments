@@ -1,0 +1,468 @@
+---
+title: "Our univariate series parts 1 through 4 assignment"
+date: March 29, 2020
+output: pdf_document
+ 
+---
+
+
+#Loading libraries and creating our dataset by reading excel raw data
+```{r}
+library(readxl)
+library(urca)
+library(tseries) 
+library(forecast)
+
+
+dataset <- read_excel("CSUSHPISA.xls", sheet = "FRED Graph", 
+                      skip = 10)
+dataset
+```
+
+
+
+
+
+
+
+######PART 1 - Forecast S&P/Case-Shiller U.S. National Home Price Index using an ARMA model
+Firstly checking raw data for stationarity. Using both urca and tseris libraries.
+
+```{r}
+for(p in 5:9){
+  print(adf.test(dataset$CSUSHPISA,k=p))
+} 
+```
+
+At lag 9 , there is statistical significance for the existence of unit root, which is not acceptable.
+It seems that raw data are NOT stationary, therefore we cannot use ARMA model straight away. We have to calculate first level
+differences.
+
+
+
+We will also be running an adf test, using the urca library with trend, drift only and none.
+
+```{r}
+adf_1_drift = ur.df(dataset$CSUSHPISA,type="drift",selectlags="AIC")  
+summary(adf_1_drift)
+
+adf_1_trend = ur.df(dataset$CSUSHPISA,type="trend",selectlags="AIC")  
+summary(adf_1_trend)
+
+adf_1_none = ur.df(dataset$CSUSHPISA,type="none",selectlags="AIC")  
+summary(adf_1_none)
+```
+
+None of the t values is enough to reject Null Hypothesis.
+Therefore none of the above tests shows statistical significance to reject the existence of unit root
+The raw data timeseries is not stationary and later on we will check 1st lvl differences for stationarity
+
+
+The raw data series seems to be trend stationary ( constant variance, not constant mean):
+```{r}
+plot(dataset$observation_date,dataset$CSUSHPISA,type="l")
+```
+
+
+
+
+#Using an ARMA test straight on raw data, to showcase non usability of data, we compare these values with an ARIMA(2,0,2) as an example:
+
+```{r}
+arma(dataset$CSUSHPISA, order = c(2, 2), lag = NULL, coef = NULL,
+     include.intercept = TRUE, series = NULL, qr.tol = 1e-07)
+```
+
+```{r}
+arima_m_202=arima(dataset$CSUSHPISA,order=c(2,0,2),method="CSS-ML")
+summary(arima_m_202)
+```
+
+Both models produced similar coefficients but we notice that ma1 and ma2 are insignificant because of their standard errros
+Same goes for intercept. There also seems to exist a possible convergence problem Therefore we will calculate first level of differences of raw data, and see if we can use and the arima model. 
+
+
+
+
+
+
+
+
+
+Also notice how Arima (1,0,0) and (1,0,1)  which are equivalent to AR and ARMA respectively fail to produce credible results:
+
+```{r}
+arima_m_100=arima(dataset$CSUSHPISA,order=c(1,0,0),method="CSS-ML")
+summary(arima_m_100)
+```
+
+Large s.e. for constant term and high AIC.
+
+
+
+
+```{r}
+arima_m_101=arima(dataset$CSUSHPISA,order=c(1,0,1),method="CSS-ML")
+summary(arima_m_101)
+```
+NaNs produced and high AIC.
+
+
+
+
+
+We will now procceed with creating two objects, first and second level differences. Then we will be checking for stationarity.
+```{r}
+first_lvl_diff = ts(diff(dataset$CSUSHPISA)) 
+second_lvl_diff=diff(first_lvl_diff)
+first_lvl_diff
+writeLines("\n")
+second_lvl_diff
+```
+
+
+ 
+```{r}
+for(p in 1:12){
+  print(adf.test(first_lvl_diff,k=p))
+}
+```
+
+Likewise our first differences show statistical significance for the existence of unit root only at lag=12
+
+
+
+We will also be checking first differences for unit root with urca library:
+```{r}
+adf_2_drift = ur.df(first_lvl_diff,type="drift",selectlags="AIC")
+summary(adf_2_drift)
+
+adf_2_trend = ur.df(first_lvl_diff,type="trend",selectlags="AIC")
+summary(adf_2_trend)
+
+adf_2_none = ur.df(first_lvl_diff,type="none",selectlags="AIC")
+summary(adf_2_none)
+```
+
+We notice that adf test with no intercept and no trend(adf.test incorporates both), has t value of -2.7676 which is lower than tau1 for 1%, therefore we can reject the null hypothesis. Therefore,  1st level differences seem stationary(according to this test). 
+
+It is not conclusive but for the sake of presentation and our forecasting we will be USING the ARIMA model (1,1,0). 
+At parts 2 and 3 of the assignment we will plot acf and pafc and choose p and q accordingly.
+
+Eyeballing the 1st differences plot, shows that even though the mean is close to 0, and the series seems mean reverting, the variance is high and it does not look like white noise. The series has steep  upswings and downswings.
+
+
+```{r}
+plot(dataset$observation_date,append(first_lvl_diff,c(NA),after=0))
+
+```
+mean:
+```{r}
+mean(first_lvl_diff)
+```
+
+
+
+
+#ARIMA (1,1,0)
+```{r}
+arima_m_110=arima(dataset$CSUSHPISA,order=c(1,1,0),method="CSS-ML") 
+summary(arima_m_110)
+```
+
+AR1 is significant.
+
+
+
+
+We will prepare forecasting and plot the results:
+```{r}
+ar110_model <- ar(dataset$CSUSHPISA, order=1,method="mle")
+ar_prediction1=predict(ar110_model,n.ahead=36,se.fit=TRUE)
+
+plot(ts(dataset$CSUSHPISA),type="l",col="black")
+lines(ar_prediction1$pred, col="red")
+lines(ar_prediction1$pred+2*ar_prediction1$se, col="cornflowerblue", lty="dashed")
+lines(ar_prediction1$pred-2*ar_prediction1$se, col="cornflowerblue", lty="dashed")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+####PART 2 Implement the Augmented Dickey-Fuller Test for checking the existence of a unit root in Case-Shiller Index series.
+
+We have already checked for the existence of a unit root for our raw data as shown in part 1. There is not enough evidence to
+reject the existence of a unit root, the raw data series is not stationary.
+
+Since our 1st differences series of data were not conclusively stationary, we will perform adf test on second level differences:
+```{r}
+for(p in c(1,3,6,12)){
+  print(adf.test(second_lvl_diff,k=p))
+} 
+```
+
+Shows the series of second differences is conclusively stationary.
+Therefore we will later use arima models with both d=1 and d=2
+
+The plot is:
+```{r}
+plot(dataset$observation_date,append(second_lvl_diff,v=c(NA,NA),after=0))
+```
+
+Although it does not look much like white noise, only 5 extreme values e , show |e(i)| > 1. As we will show later with arima residuals, the period from 2009 to 2011 is more turbulent, due to the financial crisis. Therefore most anomalies can be seen inside this timeframe. As we don't want to create an overfitting model, these results are acceptable.
+
+
+
+
+
+
+
+
+
+
+####PART 3 Implement an ARIMA(p,d,q) model. Determine p, d, q using Information Criterion or Box-Jenkins methodology.
+We will plot/calculate ACF and PACF of first and second differences , to decide on the q and p values of the candidate arima models.
+
+```{r}
+par(mfrow=c(2,2))
+Acf(first_lvl_diff)
+Pacf(first_lvl_diff) 
+Acf(second_lvl_diff)
+Pacf(second_lvl_diff)
+par(mfrow=c(1,1))
+```
+
+Plots on the top are referrering to 1st level differences, and suggest arima(1,0,0) as acf goes to 0, pacf has one major spike and one smaller spike around lag 13(so we may not have to dump ma).
+
+
+
+Plots on the bottom are referrering to 2nd level differences.
+Sinoid patterns suggest arima(0,2,0)
+
+We will produce four candidate models and choose the best to do our forecast with.
+Our preffered model should:
+
+1)Minimize loss information.
+
+2)Be parsimonious.
+
+3)Have low AIC and statistically significant parameters.
+
+4)Be fitting with small residuals.
+
+
+
+MODEL 1
+```{r}
+arima_m_100=arima(dataset$CSUSHPISA,order=c(1,0,0),method="ML") 
+summary(arima_m_100)
+```
+
+Very high AIC, MODEL 1 is not a contender since there is e^(-478.46) times probability 
+that model one minimizes information loss when compared to model 4.
+
+
+
+
+MODEL 2
+
+```{r}
+arima_m_020=arima(dataset$CSUSHPISA,order=c(0,2,0),method="ML")
+summary(arima_m_020)
+```
+
+
+
+#MODEL 3 (combination of previous models)
+```{r}
+arima_m_120=arima(dataset$CSUSHPISA,order=c(1,2,0),method="ML")
+summary(arima_m_120)
+```
+
+Rejected because the ar1 term does not seem statistically significant.
+
+
+
+
+
+MODEL 4 (explanatory variables with low s.e relative to their values, parsimonious, low AIC)
+```{r}
+arima_m_121=arima(dataset$CSUSHPISA,order=c(1,2,1),method="ML")
+summary(arima_m_121)
+```
+
+Parameters are more than 2 sd far from zero.
+
+
+
+
+
+
+
+BOX TEST TO CHECK FOR residuals autocorellation for our preferred model 4 , with (1,2,1) , lags will be tested up to 12,
+although our model uses p=1. The null hypothesis of Box test is that all residual errors up to p lags behind are zero.
+```{r}
+for(p in 1:12){
+  print(Box.test(arima_m_121$residuals, lag = p), type="Ljung-Box")
+} 
+```
+
+Results show that up to lag 8, there is NOT statistical enough significance to reject Null hypothesis that residual errors 
+up to 8 lags, are zero. Increasing the lag to greater than 8 will  starts to show some autocorellation of errors. We have tested
+arima models up to (12,2,0) and although even with lag set to 12 there did not seem to appear any autocorellation, we had many insignificant variables. Since forecasting the immediate future will be enough, we have decided to accept that up to 8 steps , there is no significant autocorellation of errors. Moreover , we decided to: 
+
+1)Plot the residuals.
+
+2)Plot the fitted arima model against the raw data.
+
+3)And comment on one of the extreme residuals.
+
+
+
+1)
+```{r}
+plot(dataset$observation_date,arima_m_121$residuals)
+```
+
+
+
+2)
+```{r}
+plot(dataset$CSUSHPISA,col="black",type="l")  #plots raw prices
+lines(fitted(arima_m_121),col="green",type="l") #plots fitted arima model above raw prices
+```
+
+
+3)Price with index 278 , which is from 2-1-2010 for example, is the one with the most negative residual value.That value is:
+-1.18, we noticed that the difference between fitter(arima) and the actual price is the same -1.18. ALTHOUGH that price difference is one of the top 5 in absolute terms, it is still percentage wise minimal to the raw data price with index 278, which is 145.632. If our model was able to capture this error, that would mean that the model is overfitting.
+
+
+```{r}
+print(dataset$CSUSHPISA[278]-fitted(arima_m_121)[278]) #difference between the above plots at index 278
+print(arima_m_121$residuals[278]) #residual with index 278
+
+```
+
+
+Therefore we shall do forecasting using the MODEL 4: arima(1,2,1).
+
+
+
+
+
+
+
+####PART 4 Forecast the future evolution of Case-Shiller Index using the ARMA model. Test model using in-sample forecasts.
+FORECAST future prices using arima(1,2,1) , 12 steps ahead.
+We decided to use order 2 for the ARMA model.
+
+```{r}
+ar_model2 <- ar(dataset$CSUSHPISA, order=2,method="mle")
+ar_prediction2=predict(ar_model2,n.ahead=12,se.fit=TRUE)
+
+plot(ts(dataset$CSUSHPISA),type="l",col="black")
+lines(ar_prediction2$pred, col="red")
+lines(ar_prediction2$pred+2*ar_prediction2$se, col="blue", lty="dashed")
+lines(ar_prediction2$pred-2*ar_prediction2$se, col="cornflowerblue", lty="dashed")
+```
+
+Red line indicates/predicts an upwards price movement, while blue lines indicate the probable/extremes price movements
+We would consider buying if price dropped below cornflowerblue line ,and we would consider selling if price rose 
+above dark blue line.
+
+Additionally with autoplot we get similar results:
+
+```{r}
+plot(forecast(arima_m_121,24))
+```
+
+
+
+
+
+
+####IN-SAMPLE forecasts 
+Case a) 1995
+
+```{r}
+ts_raw=ts(dataset$CSUSHPISA,start=1987-01-01,frequency=12)
+ar_model_95=arima(window(ts_raw,start=1992-01-01,end=1995-01-01),order=c(1,2,1),method="ML")
+ar_model_95_pred=predict(ar_model_95,n.ahead=35,se.fit = TRUE)
+plot(ts_raw)
+lines(ar_model_95_pred$pred,col="blue")
+lines(ar_model_95_pred$pred+2*ar_model_95_pred$se,col="pink",lty="dashed")
+lines(ar_model_95_pred$pred-2*ar_model_95_pred$se,col="pink",lty="dashed")
+```
+
+Model predicts price growth but with a lower slope coefficient(derivative).
+
+
+
+
+
+Case b) 2005
+
+```{r}
+ts_raw=ts(dataset$CSUSHPISA,start=1987-01-01,frequency=12)
+ar_model_2005=arima(window(ts_raw,start=2004-01-01,end=2005-01-01),order=c(1,2,1),method="ML")
+ar_model_2005_pred=predict(ar_model_2005,n.ahead=35,se.fit = TRUE)
+plot(ts_raw)
+lines(ar_model_2005_pred$pred,col="blue")
+lines(ar_model_2005_pred$pred+2*ar_model_2005_pred$se,col="pink",lty="dashed")
+lines(ar_model_2005_pred$pred-2*ar_model_2005_pred$se,col="pink",lty="dashed")
+```
+
+We notice that arima model fails to forecast the "incoming" recession, and predicts the continuation of the bull run. 
+Although the low boundary (dashed pink is signalling some decay of the exponential)
+
+
+
+
+
+
+Case c) 2010
+
+```{r}
+ts_raw=ts(dataset$CSUSHPISA,start=1987-01-01,frequency=12)
+ar_model_2010=arima(window(ts_raw,start=1990-01-01,end=2010-01-01),order=c(1,2,1),method="ML")
+ar_model_2010_pred=predict(ar_model_2010,n.ahead=35,se.fit = TRUE)
+plot(ts_raw)
+lines(ar_model_2010_pred$pred,col="blue")
+lines(ar_model_2010_pred$pred+2*ar_model_2010_pred$se,col="pink",lty="dashed")
+lines(ar_model_2010_pred$pred-2*ar_model_2010_pred$se,col="pink",lty="dashed")
+```
+
+We have decided to feed the model with more data than previous models starting from 1990, the model predicts downwards trend
+but as top pink line indicates there is some probability for the reversal of downwards trend
+
+
+
+
+
+
+
+Testing the accuracy of the model at random intervals, 5 stepped windows.
+```{r}
+forecast_x=forecast(ar_model2, n=5)
+accuracy(forecast_x,dataset$CSUSHPISA[205:210],5)
+```
+```{r}
+forecast_x=forecast(ar_model2, n=5)
+accuracy(forecast_x,dataset$CSUSHPISA[320:325],5)
+```
+
+
+We notice that for this specific forecasting period, the mean absolute error is 56.904. With other random intervals the highest MAE we got was around -110.  
+
+
+The END.

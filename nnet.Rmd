@@ -1,0 +1,488 @@
+---
+title: "LAST PROJECT, ASSIGNMENT 3"
+output: pdf_document
+---
+
+
+
+
+
+```{r,include=FALSE }
+library(tseries)
+library(urca)
+library(quantmod)
+library(tidyquant)
+library(dplyr)
+library(ggplot2)
+library(TTR)
+library(readxl)
+library(nnet)
+library(caret)
+library(e1071)
+```
+
+
+
+Loading excel file, which is MCO erc-20 Token against ethereum price and volume(daily).
+
+
+```{r setup, include=FALSE}
+library(readxl)
+mcoeth <- read_excel("mcoeth.xlsx", col_types = c("date", 
+    "numeric", "numeric"))
+View(mcoeth)
+```
+
+
+
+
+
+
+
+
+rawdata is the price column vector
+```{r , include=FALSE}
+rawdata=mcoeth$price
+par(mfrow=c(1,1))
+```
+
+
+
+
+
+
+
+We decided to run an adf.test to check for stationarity of raw data, and of rawdata returns,even though the plot does not look stationary.
+
+```{r }
+return=Delt(rawdata)
+test=ur.df(rawdata,type="none")
+summary(test)
+test2=ur.df(return[-1],type="none")
+summary(test2)
+```
+
+We notice that our returns timeseries is stationary (that could be an indication or suggestion for an arima garch model for example) but we decided to move with the implementation of a neural net trading algorithm since:
+
+a) Taking the differences may have already caused a little bit of information loss
+
+b) We wanted to work with the last module of econometrics class in order to better understand it.
+
+
+
+
+
+
+We set some variables, many of which will be included in the neural network model depending on accuracy. 
+1) Rolling Average 10
+2) Rolling Average 20
+3) Rolling Standard Deviation 10
+4) Rolling Standard Deviation 20
+5) Relative Strength Index 5
+6) Relative Strength Index 15
+7) Rolling Volume Average 20
+8) Moving average divergence convergence (nFast 5, nFast 15, periods 10.
+9) Moving average divergence convergence (nFast 10, nFast 20, periods 5.
+10)Bollinger bands 15
+11)Bollinger bands 30
+
+
+
+
+
+
+
+#MOVING AVERAGES 10(BLACK) , 20(RED)
+```{r , echo=FALSE}
+average10=rollapply(rawdata,10,mean)
+average20=rollapply(rawdata,20,mean)
+```
+
+```{r , echo=FALSE}
+plot(average10, type='l',col="black")
+lines(average20,col="red")
+```
+
+
+#MOVING STANDARD DEVIATIONS
+```{r , echo=FALSE}
+std10=rollapply(rawdata,10,sd)
+std20=rollapply(rawdata,20,sd)
+```
+```{r , echo=FALSE}
+plot(std10, type='l',col="black")
+lines(std20,col="red")
+```
+
+
+We have decided to ommit the initial 63 first observations because of the incredible volatility the token had against other assets as it was newly introduced to the market.
+
+#Creating Macd  A and B as well as two bollinger bands timeseries
+```{r , include=FALSE}
+rawdata=tail(rawdata,960)
+average10=tail(average10,960)
+average20=tail(average20,960)
+std10=tail(std10,960)
+std20=tail(std20,960)
+macdA=MACD(mcoeth$price,5,15,10,"SMA")
+macdA=tail(macdA,960)
+macdB=MACD(mcoeth$price,10,20,5,"SMA")
+macdB=tail(macdB,960)
+bbands1=BBands(mcoeth$price,15,"SMA",2)
+bbands1=tail(bbands1,960)
+bbands2=BBands(mcoeth$price,30,"SMA",2)
+bbands2=tail(bbands2,960)
+boll=data.frame(bbands1)
+```
+
+
+Plotting standard deviations against one another
+```{r , echo=FALSE}
+std10=rollapply(mcoeth$price,10,sd)
+std10=tail(std10,960)
+std20=rollapply(mcoeth$price,20,sd)
+std20=tail(std20,960)
+```
+```{r , echo=FALSE}
+plot(std10, type='l',col="black")
+lines(std20,col="red")
+```
+
+Plotting Bollinger bands 15 (Blue) and mco/eth price(black).
+```{r }
+plot(boll$up, type="l", lty=1,col="blue")
+lines(boll$dn, type="l", lty=1,col="blue")
+lines(rawdata, col="black")
+```
+
+
+#Creating RSI 15(darkblue) and 5.
+#Plotted only RSI15
+```{r , echo=FALSE}
+rsi5 = RSI(mcoeth$price,5,"SMA")
+rsi15 = RSI(mcoeth$price,15,"SMA")
+rsi5=tail(rsi5,960)
+rsi15=tail(rsi5,960)
+```
+
+
+```{r , echo=FALSE}
+plot(rsi15,type="l",lty=6,col="blue")
+```
+
+
+
+
+#Creating and plotting moving average of volume in MCO tokens.
+
+
+```{r , echo=FALSE}
+vol = rollapply(mcoeth$volume,20,mean)
+vol=tail(vol,960)
+```
+
+```{r , echo=FALSE}
+plot(tail(mcoeth$Date,960),vol,type="l",lty=6,col="black",xlab="Date",ylab="VOLUME")
+```
+
+
+
+
+
+
+
+
+
+
+Splitting the data in 3 categories. One for training, one validating and one for testing.
+
+####   PART A    ##### training.
+
+
+Creating a direction matrix of MCO prices.
+
+First we create direction matrix with  970 rows and 1 column. First column has indexes and second one is emmpty. Then we fill the empty column with "Up", "Down" and "Stay" signals
+according to percentage change between lagged returns (last 20 days) and  the current price.
+
+If current price on a certain time exceeds lagged prices by 2%  we set the value of the cell "Up" and so on.
+Here we are printing the last 20 returns (showing off).
+```{r ,echo=FALSE}
+rawdata2=data.frame(rawdata)
+direction =matrix(NA, dim(rawdata2)[1],1)
+#direction
+lag=Lag(tail(mcoeth$price,980),20)
+lag=tail(lag,960)
+lagreturns = (rawdata - lag)/lag
+#lagreturns
+rownames(lagreturns)=NULL
+print (tail(lagreturns,20))
+```
+
+#filling direction  vector with "Up" , "Down" ,"Nowhere" signals according to lagreturns.
+Outputs last 20 signals.
+
+```{r }
+direction[lagreturns > 0.02]="Up"
+direction[lagreturns < -0.02]="Down"
+direction[lagreturns <= 0.02 & lagreturns >= -0.02]="Nowhere"
+tail(direction,20)
+```
+
+###Creating a dataset for training.
+
+```{r }
+dataset=cbind(rawdata,average10,average20,rsi5,rsi15,std10,std20,vol,macdA,macdB,bbands1,bbands2)
+rownames(dataset)=NULL
+```
+
+We have decided to divide the 960 data as follows:
+1) one half for traiing   (480 observations)
+2)one third for validating (320 observations)
+3)one sixth for testing  (160 observations)
+
+
+we create a  matrix (trainMco), that consists of columns taken from dataset, and contains the first 480 observations of each variable.
+(Showing 10 last observations of each variable)
+```{r }
+trainrow = which(index(dataset)>=1 & index(dataset)<=480)
+trainMCO=dataset[trainrow,]
+trainMEAN=apply(trainMCO,2,mean)
+trainSTD=apply(trainMCO,2,sd)
+tail(trainMCO,10)
+
+```
+
+
+
+
+#normalizing the Data
+We will create a new matrix (matrix trainidn stores "1" in all of its cells ) , this will help us normalize tha data
+ 
+( dim(trainMCO)[1] is the number of rows of trainMCO matrix )
+```{r }
+trainidn <- (matrix(1,dim(trainMCO)[1],dim(trainMCO)[2]))
+print ("trainidn is a 480 by 20 matrix")
+```
+The reason this matrix has more columns than our variables dataset has, is because inputs such as  macd 
+include more variables in them. For example each MACD indicator comes along with signal, which is the difference between the fast and the slow moving average.
+
+
+
+In the following piece of code , we normalize the prices. "t" stands for matrix transpose.
+Here we print the last 10 values of our normalized MCO dataset
+```{r }
+norm_trainMCO = (trainMCO-t(trainMEAN*t(trainidn)))/t(trainSTD*t(trainidn))
+tail(norm_trainMCO,10)
+```
+
+
+
+
+Plotting first 480 normalized price observations(black).
+```{r ,include=FALSE}
+norm_data=as.data.frame(norm_trainMCO)
+```
+
+```{r }
+plot(head(mcoeth$Date,480),norm_data$rawdata,type="l",lty=6,col="black",xlab="DATE",ylab="MCO/ETH prices normalized")
+```
+
+
+We set a random seed and we keep first 480 signals of direction vector, by passing trainrow.
+```{r }
+y=set.seed(1)
+traindir=direction[trainrow,1]
+
+#setting a seed to generate random numbers, that will be used as coefficients for nnet
+```
+
+
+
+We chose to let the algorith run 199 iterations. We tried many iteration combinations, all produced good results. tHE minimum with test data was above 60%. 
+We noticed that around 200 iterations is a local sweet spot that raised accuracy significantly.
+```{r }
+neural_network <- nnet(norm_trainMCO, class.ind(traindir), size=4, trace=T, maxit =199)
+neural_network
+```
+
+
+
+####   PART B    #####   VALIDATION
+Creating a validation dataset of 320 observations ( index 481 to 800 of our initial dataset)
+Here re the last 10 observations
+```{r }
+validrow = which(index(dataset)>=481 & index(dataset)<=800)
+validMCO=dataset[validrow,]
+tail(validMCO,10)
+```
+
+
+Creating an auxilliary 320 x 20 matrix for helping us normalize the validation data using sd and mean from training data.
+```{r }
+valiidn =(matrix(1,dim(validMCO)[1],dim(validMCO)[2]))
+```
+
+Normalizing data.
+```{r }
+norm_validMCO = (validMCO - t(trainMEAN*t(valiidn))) /t(trainSTD*t(valiidn))
+tail(norm_validMCO,10)
+```
+
+
+
+Plotting normalized validation data prices.
+```{r ,include=FALSE}
+norm_data2=as.data.frame(norm_validMCO)
+```
+
+
+```{r }
+plot(head(tail(mcoeth$Date,480),320),norm_data2$rawdata,type="l",lty=6,col="black",xlab="DATE",ylab="MCO/ETH prices normalized")
+```
+
+
+Validir is a new vector that stores all signals from our initial "direction" vector ( from index 481 to index 800)
+```{r }
+validir <- direction[validrow,1]
+
+#head(validir,30)==direction[481:510]
+#check is fine
+```
+
+
+Making predictions on normalized validating data, using neural network we got from training data
+```{r }
+valid_pred=predict(neural_network,norm_validMCO)
+```
+
+Using "valid_pred" information we will calculate the predicted direction, by creating a data frame matrix(one column) and then we will find the max value of each row and set the signal accordingly(based on predictions made by neural network), e.g. if "Up" value is the maximum, we will set valid_pred_class to "Up" and so on.
+We noticed in our testing that  ">0.5"  methodology/algorithm did not always work , since there were 
+some rows that had all values below 0.5, therefore the matrix had a lot of missing values.
+Once we have obtained the predictions we will compare those with real signals later on.
+
+
+
+
+Here we print the last 10 values of that predictions' signal vector.
+```{r }
+valid_pred_class=data.frame(matrix(NA,dim(valid_pred)[1],1))
+#valid_pred_class is now an empty column
+for (i in 1:320) {
+  if (max(valid_pred[,"Down"][i], valid_pred[,"Up"][i], valid_pred[,"Nowhere"][i]) == valid_pred[,"Down"][i]) {valid_pred_class[,1][i] = "Down"}
+  if (max(valid_pred[,"Down"][i], valid_pred[,"Up"][i], valid_pred[,"Nowhere"][i]) == valid_pred[,"Up"][i]) {valid_pred_class[,1][i] = "Up"}
+  if (max(valid_pred[,"Down"][i], valid_pred[,"Up"][i], valid_pred[,"Nowhere"][i]) == valid_pred[,"Nowhere"][i]) {valid_pred_class[,1][i] = "Nowhere"}
+}
+
+#valid_pred_class is now complete
+#valid_pred_class
+tail(valid_pred,20)
+
+```
+
+Checking the results
+```{r }
+
+tail(valid_pred_class,10)
+```
+
+Creating the confusion matrix
+```{r }
+u = union(valid_pred_class[,1], validir)
+matrix = table(factor(valid_pred_class[,1], u), factor(validir, u))
+confusionMatrix(matrix)
+
+
+```
+
+#Results are encouraging, other attempts with different data, were not as successful. We also noticed that even slight mutations in the dataset, affect the algorithm. E.g. Changing the order of variables in the dataset.
+
+####   PART C   #####   TESTING DATA (last 120 observations of rawdata)
+
+
+
+Again we are creating a normalized data colum using our test data this time.
+```{r }
+testrow = which(index(dataset) >= 801 & index(dataset) <= 960)
+testMCO = dataset[testrow,] 
+testidn <- (matrix(1,dim(testMCO)[1],dim(testMCO)[2]))
+norm_testMCO <- (testMCO -t(trainMEAN*t(testidn))) /t(trainSTD*t(testidn))  
+```
+
+
+"testdir" is a new vector that stores all signals from our initial "direction" vector ( from index 801 to index 960)
+```{r }
+testdir <- direction[testrow,1]
+```
+
+
+Making predictions on test data, using neural network
+```{r }
+test_pred <- predict(neural_network,norm_testMCO)
+tail(test_pred,10)
+```
+
+
+Creating a matrix column to store our signals based on our test predictions.
+```{r }
+test_pred_class <- data.frame(matrix(NA,dim(test_pred)[1],1))
+#test_pred_class  the matrix is now empty
+for (i in 1:160) {
+  if (max(test_pred[,"Down"][i], test_pred[,"Up"][i], test_pred[,"Nowhere"][i]) == test_pred[,"Down"][i]) {test_pred_class[,1][i] = "Down"}
+  if (max(test_pred[,"Down"][i], test_pred[,"Up"][i], test_pred[,"Nowhere"][i]) == test_pred[,"Up"][i]) {test_pred_class[,1][i] = "Up"}
+  if (max(test_pred[,"Down"][i], test_pred[,"Up"][i], test_pred[,"Nowhere"][i]) == test_pred[,"Nowhere"][i]) {test_pred_class[,1][i] = "Nowhere"}
+}
+#test_pred_class is now filled
+```
+
+
+
+
+
+
+Comparing last 10 values between test_pred_class and test_pred to verify everthing went ok.
+
+```{r }
+tail(test_pred,10)
+
+```
+
+
+```{r }
+tail(test_pred_class,10)
+
+```
+
+
+
+
+
+
+Checking the accuracy of forecasts on test data by creating a confusion test matrix.
+```{r }
+u <- union(test_pred_class[,1], testdir)
+t <- table(factor(test_pred_class[,1], u), factor(testdir, u))
+confusionMatrix(t)
+
+```
+
+
+#Generating signals for for "Up" => 1 , "Down" => -1 and  zero for nowhere. Here we are showing the last 5 signals.
+```{r }
+signal<- ifelse(test_pred_class=="Up",1,ifelse(test_pred_class=="Down",-1,0))
+tail(signal)
+```
+
+Trader anticipates, price will fall and does not buy.
+
+
+
+
+
+
+
+
+####THE END####
+Time spent on this assignment Is/was really rewarding,
+Let alone Entertaining. Maybe any HopeS/expectations we now have, will lead to good algorithms in the future.
+
+

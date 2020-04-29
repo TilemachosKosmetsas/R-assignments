@@ -1,0 +1,319 @@
+---
+title: "Calculating the equilibrium FX Of EUR/USD"
+output: pdf_document
+---
+
+```{r message=FALSE}
+library(readxl)
+library(vars)
+library(timeSeries)
+library(urca)
+library(tsDyn)
+library(tseries)
+```
+
+
+
+Loading our excel file matrix.xlsx:
+```{r}
+library(readxl)
+matrix <- read_excel("C:/Users/tiel_/Desktop/assignment/matrix.xlsx", 
+                     col_types = c("date", "numeric", "numeric", 
+                                   "numeric", "numeric", "numeric"))
+View(matrix)
+```
+
+Initially we have chosen 3 timeseries , to search for the model thatcalculates the fair value of euro to usd exchange rate
+
+
+Our 1st variable is the EUR/USD exchange rate (1st differences which is stationary) - I(1).
+
+Our 2nd variable is consumer price index differences  between the eurozone  and USA - I(0)
+
+Our 3rd variable is Harmonized Unemployement rate difference between 
+the euro zone (not whole european union) and USA I(0).
+
+
+
+Since EUR/USD timeseries is not stationary therefore we checked 
+of euro/usd price first differences at laggs 1,2,6 for stationarity.
+
+```{r}
+for(p in c(1,2,6)){
+  print(adf.test(matrix$firstdfer_eu_usa,k=p))
+} 
+```
+
+Thus proving this timeseries is stationary. We will be using 1st differences for our first var model.
+
+Similarly we are checking for stationarity of timeseries DIFFERENCE IN CONSUMER PRICE INDEXES BETWEEN EUROZONE/USA.
+
+```{r}
+for(p in c(1,2,6)){
+  print(adf.test(matrix$cpidf_eu_usa,k=p))
+} 
+
+```
+```{r}
+summary(ur.df(matrix$cpidf_eu_usa, type="trend", selectlags = "AIC"))
+```
+We conclude our timeseries is also stationary.
+
+Similarly for Harmonized Unemployement rate difference between two areas.
+we chose adf test from urca package because there is no trend and drift seemingly in the process
+oUR raw data ( differences between the two areas would result seeming not stationary if we include trend and drift).
+```{r}
+plot(diff(matrix$hurdf_eu_usa))
+
+```
+```{r}
+summary(ur.df(diff(matrix$hurdf_eu_usa), type="none", selectlags = "AIC"))
+```
+
+Our t-statistic is significantly low , with very small p-value.
+
+
+
+
+For simplicity reasons:
+
+```{r}
+euer = matrix$firstdfer_eu_usa
+eucpi=matrix$cpidf_eu_usa
+euhur=c(0,diff(matrix$hurdf_eu_usa))
+eurusd=(matrix$eurusd)
+OBG=(matrix$oil)
+data = cbind(euer,eucpi,euhur)
+```
+
+
+We are checking/viewing for simple contemporaneous orrelation between our variables
+
+```{r}
+cor(data)
+```
+
+
+```{r}
+cor(data)
+```
+
+
+Interestingly  we notice that there is a slight negative correlation between eur/usd exchange rate(1st diff)
+and harmonized unemployment differences. There is also a small positive correlation between CPI DIFF and eur/usd exch rate,
+as well as a slight negative correlation between harmonized un. rate (eu-usa difference) and  CPI DIFF (eur-usa diff).
+Results seem to indicate that variables don't correlate strongly amongst each other.
+
+Before selecting the proper lag (for our var model) , we decided to check for lag=1, in order to take some preliminary
+results.
+
+
+```{r}
+testvar =VAR(data,lag.max= 1, type="none",ic="AIC")
+```
+
+```{r}
+summary(testvar)
+```
+
+We notice that our variable euhur, is showing some behavior of insignificance in our model(in all 3 equations).
+
+By setting lag.max , we are setting the command to let AIC criterion to choose the best number of lags for us, checking all possible combinations up to 12.
+
+```{r}
+var_model=VAR(data,lag.max= 12, type="none",ic="AIC")
+```
+
+
+```{r}
+summary(var_model)
+```
+
+Suggested number of lags appears to be 7.
+
+To interpret this estimation , we will use  the impulse response fucntion tool(reaction to external shocks) and the forecast variance decomposition (show the extent and number of lags at which one variable's behavior is affected/explained by other variables).
+
+Computing and plotting ir functions (var model lag = 7)
+
+```{r}
+var_irf= irf(var_model, n.ahead=12,boot=TRUE,ci=0.95)
+```
+
+```{r}
+devAskNewPage(ask = FALSE)
+plot(var_irf)
+```
+
+At 1st plot we notice that an innovation at euer, has a significant impact on eucpi and the series is 
+slowly reverting to its natural behavior.
+
+At 2nd plot we notice that an innovation at eucpi has a strong impact and  has a sinoid pattern of reversion to equilibrim.
+
+At 3rd plot we notice that an innovation on euhur  affects eucpi (sinoid pattern at first 8 lags).
+
+
+
+
+
+
+
+
+
+
+
+Computing and plotting forecast variance decomposition.
+
+```{r}
+var_fvd=fevd(var_model,n.ahead=13)
+plot(var_fvd)
+```
+
+
+EUR/USD 1st differences variance decomposition, is significantly self-explanatory.
+
+EURO - USA  cpi difference (not 1st differences) variance is self explanatory up to lag 4, where there appears to exist some 
+explanatory relationship of eucpi variance with euer variable.
+
+EURO-Usa DIFFERENCES IN harmonized unemployement rate differenced, is pretty much self explanatory.
+
+ALL THE ROOTS of the characteristic polynomial are inside the unit circle (for our first var model presented above)
+0.9731 0.9327 0.8245 0.8245 0.8229 0.8229 0.8041 0.8041 0.7986 0.7858 0.7858 0.7844 0.7844 
+0.7784 0.6571 0.6571 0.6275 0.6275 0.5787 0.5787 0.5472
+many coefficients though as stated already are insignificant (lag number=7), we anticipated a not so encompassing model because of variable euhur.
+
+We decided to construct a bivariate var(2) by removing euhur.
+
+```{r}
+data2=cbind(euer,eucpi)
+```
+
+Now our model 2 below is much more encompassing(only one lag), with a very high f statistic , significant coefficients
+with a p-value of almost 0:
+```{r}
+var_model2=VAR(data2,lag.max= 12, type="none",ic="AIC")
+summary(var_model2)
+```
+
+
+We plotted the diagram of fit and residuals for euer (model 2):
+plot(var_model2,name="euer") ---->plot output is png file Rplot
+
+We also plotted thediagram of fit and residuals for eucpi (model 2):
+plot(var_model2,name="eucpi") ---->plot output is png file Rplot01
+
+We met issues with png margins, be cause the output seems to be in a matrix form the interpreter could not present.
+The auto corellation function and partial acf plots of the residuals for both variables are comfortably insignificant.
+
+
+
+We also check to see if the residuals from our 1st model(3 variables), are also uncorrelated over time
+
+```{r}
+resids1st= residuals(var_model)
+resid1=resids1st[,1]
+resid2=resids1st[,2]
+resid3=resids1st[,3]
+```
+
+```{r}
+ccf(resid1,resid2,lag.max=12,type="correlation",plot=TRUE)
+```
+residuals between first two variables are not correlated significantly
+
+
+
+```{r}
+ccf(resid1,resid3,lag.max=12,type="correlation",plot=TRUE)
+```
+same for 1st and 3rd variable
+
+```{r}
+ccf(resid2,resid3,lag.max=12,type="correlation",plot=TRUE)
+```
+we notice that there are no strong correlations of residuals for first model
+
+
+
+
+Since we used differenced data I(1) , we may have had result in loss of information.
+As we were not please with our var model1(7 lags), and also with model2 , because it contained only one macroeconomic variable we have decided to  use Global Brent Oil as an exogenous 3rd variable for our second model. Eyeballing the timeseries we notice some cointegration, therefore, Within VAR framework we will do a Johansen's Test between oil prices
+and eur/usd.
+
+Before running a cointegration test on our I(1) EURUSD TIMESERIES , lets take a look at plots and check that OIL prices is also I(1).
+
+```{r}
+par(mfrow=c(1,2))
+plot(matrix$date,ts(log(matrix$oil)),type="l",col="red")
+plot(matrix$date,ts(log(matrix$eurusd)),type="l",lty=6,col="black")
+```
+
+
+```{r}
+for(p in c(1,2,6)){
+  print(adf.test(diff(matrix$oil),k=p))
+} 
+```
+
+It is obvious(above) that Brent price is not stationary, but timeseries of first differences is stationary.
+
+
+Johanson's Test
+
+```{r}
+rates=cbind(OBG,eurusd)
+test2 =ca.jo(rates, type="eigen", K=2, ecdet="none", spec="longrun" )
+summary(test2)
+```
+Since test value for r=1 is 8.44 > 8.15, there exists a cointegration 
+relationship between the two variables, with 5% error margin.
+
+With rank of the PI matrix being 1
+We will now construct a bivariate vecm model using only I(1) variables, oil and eur/usd exchange rate using 2 lags:
+
+
+```{r}
+vecm_fit=VECM(rates,1,r=1,estim="ML",LRinclude = "none")
+summary(vecm_fit)
+```
+
+We have decided to initially include one lag to get significant coefficients 
+but also two lags in order to neutralize autocorrelation bias. For parsimony reasons we will use two lags , although one lag
+produces more significant coefficients. In both cases, rank is 1.
+
+
+```{r}
+vecm_fit2=VECM(rates,2,r=1,estim="ML",LRinclude = "both")
+summary(vecm_fit2)
+```
+
+
+We will use our second vecm model to predict eur/usd values at times t+1 to t+10.
+We will also do the same using our first var model(3 variables,lag=7),  and second model(two variables ,1 lag).
+They both forecast the difference between eur and usd at time t+1.
+Lets take a look at the last ten known eur/usd prices first:
+tail(eursd,n=10)
+
+```{r}
+tail(eurusd,n=10)
+```
+VECM PREDITION
+```{r}
+predict(vecm_fit2,n.ahead=10)
+```
+
+we notice a slight increase for the first 5 periods in euro/usd price and then a decline. 
+
+
+
+
+Our var first model prediction:
+```{r}
+pred2=predict(var_model,n.ahead=10)
+plot(pred2)
+```
+
+Our var second model prediction:
+```{r}
+pred3=predict(var_model2,n.ahead=10)
+plot(pred3)
+```
